@@ -1,0 +1,446 @@
+'''
+慧燈中學 111學年下學期 學生進階作業
+配合聯網視訊教學小車使用
+'''
+import sys
+import cv2
+import numpy as np
+import socket
+import struct
+import pygame
+from pygame.locals import *
+
+
+'''
+學生作業區
+start
+
+程式執行方式
+在terminal視窗中 ，打指令:
+python camera.py carIP
+'''
+#PID 參數
+lastError = 0
+kP = 0.5
+kD = 0.3
+def fLane(image):
+    global lastError
+
+    #找線法
+    # 取出ROI
+    roi = image[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])]
+    roi_Xcenter = r[2] // 2
+
+    #模糊化
+    blurthreshold= cv2.getTrackbarPos('blurthreshold', 'realtimeWindow')
+    blurthreshold = blurthreshold + (blurthreshold%2+1)
+    imgblur = cv2.GaussianBlur(roi, (blurthreshold, blurthreshold), 0)
+
+    #灰階化
+    imgGray = cv2.cvtColor(imgblur , cv2.COLOR_RGB2GRAY)
+
+    #二值化
+    binthreshold = cv2.getTrackbarPos('binthreshold', 'realtimeWindow')
+    _, imgbin = cv2.threshold(imgGray, binthreshold,255,cv2.THRESH_BINARY)
+
+    # 偵測邊緣 canny
+    imgcanny = cv2.Canny(imgbin, 36, 36)
+
+    #顯示即時canny video
+    cv2.imshow('realtimeWindow', cv2.addWeighted(imgGray,0.6,imgcanny,0.5,0.3))
+
+    #Hough 找線
+    rho = 1                 # Distance resolution in pixels of the Hough grid
+    theta = np.pi/180       # Angular resolution in radians of the Hough grid
+    min_votes = 50          # Minimum number of votes (intersections in Hough grid cell)
+    min_line_length = 60    # Minimum number of pixels in a line
+    max_line_gap = 80      # Maximum gap in pixels between connectable line segments
+    lines = cv2.HoughLinesP(imgcanny, rho, theta, min_votes, np.array([]), min_line_length, max_line_gap)
+
+    #有找到線的話，計算左右兩邊的線的中心減去ROI中心點，得出誤差，按比例轉換成馬達馬力，控制車子走向。
+    if lines is not None:
+        bundler = HB.HoughBundler(min_distance=60,min_angle=45)
+        lines = bundler.process_lines(lines)
+
+
+
+        # #畫線, and  find max and min of x
+        # max_X = -1
+        # min_X = 999
+        # for line in lines:
+        #  for x1,y1,x2,y2 in line:
+        #     cv2.line(roi,(x1,y1),(x2,y2),(0,255,0),2)
+        #     max_X = max(x1,x2,max_X)
+        #     min_X = min(x1,x2,min_X)
+        # # Calculate the middle of max_left_x and max_right_x
+        # middle_x = (max_X + min_X) // 2
+        #
+
+
+
+
+
+
+        #分左右邊的線
+
+        left_lines = []
+        right_lines = []
+        for line in lines:
+            for x1, y1, x2, y2 in line:
+                if x1 > roi_Xcenter or x2 > roi_Xcenter:
+                    right_lines.append(line)
+                else:
+                    left_lines.append(line)
+
+        #畫線
+        for line in left_lines:
+            for x1,y1,x2,y2 in line:
+                cv2.line(roi,(x1,y1),(x2,y2),(0,255,0),2)
+        for line in right_lines:
+            for x1,y1,x2,y2 in line:
+                cv2.line(roi,(x1,y1),(x2,y2),(0,255,255),2)
+
+        # If left_lines is not None, get the max x value among them
+        if left_lines:
+            max_left_x = max([max(x1, x2) for line in left_lines for x1, y1, x2, y2 in line])
+        else:
+            max_left_x = 0 #no left line found then max is 0
+        # If right_lines is not None, get the max x value among them
+        if right_lines:
+            min_right_x = min([min(x1, x2) for line in right_lines for x1, y1, x2, y2 in line])
+        else:
+            min_right_x = r[2]#no line found then max is the width of r
+
+        # Calculate the middle of max_left_x and max_right_x
+        middle_x = (max_left_x + min_right_x) / 2
+
+
+        # Calculate the error between middle_x_transformed and image center x
+        error = roi_Xcenter - middle_x
+        deltaError = error - lastError
+        lastError = error
+
+        #PID
+        kP = 0.5
+        kD = 0.1
+        basicSpeed = 150 #range: +-255
+        rm = int(basicSpeed + error * kP - deltaError * kD )
+        lm = int(basicSpeed - error * kP + deltaError * kD )
+        #限制馬力的值 in +-255
+        rm = max( min( rm,255) , -255)
+        lm = max( min( lm ,255), -255)
+        print(error,lm,rm)
+        usoc.sendto( struct.pack('>hhh',lm,rm,0) , (carAddress,carPort) )#intel is little-endian , esp32 is big-endian
+
+
+        #畫出線中心
+        # Draw a circle at the middle_x_transformed position
+        cv2.circle(roi, (int(middle_x), r[3]//2), 5, (255, 0, 0), -1)
+        # Draw a circle at the center x of the image
+        cv2.circle(image, (int(roi_Xcenter), int(r[1] + r[3] / 2)), 3, (255, 255, 255), -1)
+    else:#沒找到線的話緩速前進
+        print('no line found!')
+        usoc.sendto( struct.pack('>hhh',50,50,0) , (carAddress,carPort) )#intel is little-endian , esp32 is big-endian
+
+    # 合併ROI回原始視訊
+    image[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])] = roi
+
+'''
+學生作業區
+end
+'''
+
+
+
+'''
+功能開關區
+搖桿
+視覺
+'''
+JOYSTICKENABLED = False
+JOYSTICKENABLED = True
+VISIONENABLED = False
+VISIONENABLED = True
+
+
+'''
+#opencv definitions
+'''
+import HoughBundler as HB
+r = "" #ROI
+bindefaultThreshold = 190
+#可調bar
+def nothing(_):
+    pass
+if VISIONENABLED:
+    # Create a window to display the image
+    cv2.namedWindow('realtimeWindow')
+    # Create a trackbar to adjust the threshold value
+    cv2.createTrackbar('binthreshold', 'realtimeWindow', bindefaultThreshold, 255, nothing)
+    cv2.createTrackbar('blurthreshold', 'realtimeWindow', 17, 255, nothing)#blur has to be an odd no.
+
+
+
+
+
+
+
+def getRemoteIP():
+    pass
+
+
+
+# Screen settings
+# SCREEN = [800, 600]
+SCREEN = [640, 480]#VGA
+# Set game screen
+screen = pygame.display.set_mode(SCREEN, pygame.DOUBLEBUF)
+
+
+
+pygame.init()  # Initialize pygame
+
+try:
+    # Initialize the joysticks
+    pygame.joystick.init()
+    # joystick = pygame.joystick.Joystick(0)
+    joystick = pygame.joystick.Joystick(0)
+    joystick.init()
+except:
+    JOYSTICKENABLED = False
+bladeState = 0
+
+
+frameIdNow = 0
+frameSizeNow = 0
+packetIdNow = 0
+packetCount = 0
+packetLen = 0
+frameSizeOk = 0
+jpgBuff = bytes('', 'utf-8')
+
+#syntax:
+syntax =  '''python camera.py carIP
+ex:python camera.py 192.168.0.233
+'''
+
+
+try:
+    #carAddress = '192.168.50.21'
+    carAddress = str(sys.argv[1])
+    carPort = 10000
+    localPort = 2222
+    usoc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #建一个UDP socket
+    usoc.bind(('',localPort))
+    print("Lisetenning to Car Cam Success!")
+
+    pygame.display.set_caption(carAddress + ' @' + str(localPort) )
+
+except Exception as e:
+    print(e)
+    print(syntax)
+    exit()
+
+#先送訊號給車IP
+usoc.sendto( struct.pack('BB',0,0) , (carAddress,carPort) )
+
+
+#開始接收視訊及送遙控訊號
+clock = pygame.time.Clock()
+while True:
+    udpbuff, _carAddress = usoc.recvfrom(10240)
+    frameId = (udpbuff[1] << 24) + (udpbuff[2] << 16) + (udpbuff[3] << 8) + udpbuff[4]
+    frameSize = (udpbuff[5] << 24) + (udpbuff[6] << 16) + (udpbuff[7] << 8) + udpbuff[8]
+    packetId = udpbuff[10]
+    packetSize = (udpbuff[13] << 8) + udpbuff[14]
+    if frameIdNow != frameId:
+        frameIdNow = frameId
+        frameSizeNow = frameSize
+        packetCount = udpbuff[9]
+        packetLen = (udpbuff[11] << 8) + udpbuff[12]
+        frameSizeOk = 0
+        packetIdNow = 0
+        jpgBuff = bytes('', 'utf-8')
+
+    if (packetId <= packetCount) and (packetId > packetIdNow):
+        if packetSize == (len(udpbuff)-15):
+            if (packetSize == packetLen) or (packetId == packetCount):
+                jpgBuff = jpgBuff + udpbuff[15:]
+                frameSizeOk = frameSizeOk + len(udpbuff) - 15
+
+    #完整收到一幀影像
+    if frameSizeNow == frameSizeOk:
+        #FPS
+        clock.tick()
+        fps = str(int(clock.get_fps()))
+
+        nparr = np.frombuffer(jpgBuff, dtype=np.uint8)
+        image = cv2.cvtColor( cv2.imdecode(nparr, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB )
+
+        if VISIONENABLED:
+            # Select ROI
+            if r == "":
+                r = cv2.selectROI('ROIWIN',image)
+                # r=(70, 283, 570, 197)
+                print(r)
+                cv2.destroyWindow('ROIWIN')
+
+            #呼叫學生作業(視覺功能)
+            fLane(image)
+
+
+
+
+
+        # #找 最大 blob
+        # # Select ROI
+        # if r == "":
+        #  r = cv2.selectROI('ROIWIN',image)
+        #  # r=(70, 283, 570, 197)
+        #  print(r)
+        #  #cv2.destroyAllWindows()
+        #  cv2.destroyWindow('ROIWIN')
+        # # Crop image
+        # roi = image[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])]
+
+        # #灰階化
+        # imgGray = cv2.cvtColor(roi , cv2.COLOR_RGB2GRAY)
+
+        # #二值化
+        # # Get the current threshold value from the trackbar
+        # threshold = cv2.getTrackbarPos('Threshold', 'realtimeWindow')
+        # _, imgbin = cv2.threshold(imgGray, threshold,255,cv2.THRESH_BINARY)
+
+        # #反相
+        # imgRevert = cv2.bitwise_not(imgbin)
+        # cv2.imshow('realtimeWindow', imgRevert)
+
+        # # Find the contours in the binary image
+        # contours, hierarchy = cv2.findContours(imgRevert, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        # # Find the index of the largest contour that has a black color
+        # largest_contour_index = -1
+        # largest_contour_area = 0
+        # for i in range(len(contours)):
+        #  area = cv2.contourArea(contours[i])
+        #  if hierarchy[0][i][3] == -1 and area > largest_contour_area:
+        #     largest_contour_index = i
+        #     largest_contour_area = area
+        # # Draw the largest contour on the original image
+        # if largest_contour_index != -1:
+        #  largest_contour = contours[largest_contour_index]
+        #  cv2.drawContours(roi, [largest_contour], 0, (0, 0, 255), 2)
+        # # Calculate the moments of the largest contour
+        # M = cv2.moments(largest_contour)
+        # # Calculate the centroid of the largest contour
+        # cx = int(M['m10']/M['m00'])
+        # cy = int(M['m01']/M['m00'])
+        # # Draw a circle at the centroid of the largest contour
+        # cv2.circle(roi, (cx, cy), 5, (0, 0, 255), -1)
+
+        # # Get the dimensions of the image
+        # rows, cols, channels = image.shape
+
+        # # Calculate the X-coordinate of the center of the image
+        # center_x = int(cols/2)
+        # # Merge grayscale ROI back into original image
+        # image[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])] = roi
+        # #找 最大 blob 法 end
+
+
+        # #PID error
+        # error = center_x - cx
+        # rm = min( int(70 + error * 0.8 ),255)
+        # lm = min( int(70 - error * 0.8 ) ,255)
+        # rm = max( rm, -255)
+        # lm = max( lm, -255)
+        # print(error,lm,rm)
+        # usoc.sendto( struct.pack('>hhh',lm,rm,0) , (carAddress,carPort) )#intel is little-endian , esp32 is big-endian
+
+
+
+
+
+
+        #result = cv2.addWeighted(image, 0.9, black_img, 0.4, 0.22)
+        #畫到pygame
+        # test1 = pygame.image.frombuffer(image.tostring(),image.shape[1::-1] ,"RGB")
+
+        # Draw the FPS on the screen
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1
+        font_color = (255, 255, 255)
+        cv2.putText(image, fps, (10,30), font, font_scale, font_color, 2)
+
+        #畫到pygame
+        test1 = pygame.image.frombuffer(image.tostring(),image.shape[1::-1] ,"RGB")
+
+        # screen.fill([0, 0, 0])  # Blank fill the scrceen
+        screen.blit(test1, (0, 0))  # Load new image on screen
+        pygame.display.update()  # Update pygame display
+
+    # 搖桿控制
+    # left axis向前為負，油門需取負值 左- 右+
+    if JOYSTICKENABLED:
+        paddleAxis = -1 * int(joystick.get_axis( 1 )* 255)
+        handleAxis = int(joystick.get_axis( 2 )*1000)
+        if( joystick.get_button( 0 )):
+            bladeState = 255
+        if(joystick.get_button(1) ):
+            bladeState = 0
+        if 10 <= paddleAxis or  paddleAxis <= -10 :    #for joystick deadzone
+            # padd = paddleAxis / 4
+            leftHF = min( abs(-1001 - handleAxis) / 1000, 1 )
+            rightHF = min( (1001 - handleAxis) / 1000, 1 )
+            lm = min( int(paddleAxis * leftHF) ,255)
+            rm = min( int(paddleAxis * rightHF),255)
+            usoc.sendto( struct.pack('>hhh',lm,rm,bladeState) , (carAddress,carPort) )#intel is little-endian , esp32 is big-endian
+            # print(lm,rm,bladeState)
+        else:
+            usoc.sendto( struct.pack('>hhh', 0 , 0, bladeState) , (carAddress,carPort) )
+            # print(0 , 0, bladeState)
+
+
+
+
+
+
+    #鍵盤控制
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            print("QUITing")
+            # usoc.close()
+            # gsoc.close()
+            pygame.quit()
+        # if event.type == pygame.KEYUP:
+        #  if event.key == pygame.K_z:
+        #     pass
+        #     # gsoc.send( struct.pack('B',87) )
+        if event.type==pygame.JOYBUTTONDOWN:
+            print("Joystick button pressed.")
+        if event.type == pygame.JOYBUTTONUP:
+            print("Joystick button released.")
+
+    keys=pygame.key.get_pressed()
+    if keys[pygame.K_q]:
+        print("Q pressed, QUITing")
+        # usoc.close()
+        # gsoc.close()
+        break
+    elif keys[pygame.K_w]:
+        usoc.sendto( struct.pack('>hhh',200,200,0) , (carAddress,carPort) )
+        # print('send 200 200')
+    elif keys[pygame.K_a]:
+        usoc.sendto( struct.pack('>hhh',0,200,0) , (carAddress,carPort) )
+    elif keys[pygame.K_d]:
+        usoc.sendto( struct.pack('>hhh',200,0,0) , (carAddress,carPort) )
+    elif keys[pygame.K_s]:
+        usoc.sendto( struct.pack('>hhh',0,0,0) , (carAddress,carPort) )
+
+
+usoc.sendto( struct.pack('>hhh',0,0,0) , (carAddress,carPort) )
+usoc.close()
+pygame.quit()
+cv2.destroyAllWindows()
+
+#python C:\Users\ASUS\IdeaProjects\untitled26\camera.py 10.185.0.89
