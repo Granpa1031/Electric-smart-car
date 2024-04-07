@@ -1,7 +1,4 @@
-'''
-慧燈中學 111學年下學期 學生進階作業
-配合聯網視訊教學小車使用
-'''
+
 import sys
 import cv2
 import numpy as np
@@ -12,7 +9,6 @@ from pygame.locals import *
 
 
 '''
-學生作業區
 start
 
 程式執行方式
