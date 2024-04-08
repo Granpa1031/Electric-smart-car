@@ -20,7 +20,7 @@
 
 程式碼允許啟用或禁用操縱桿控制和視覺控制功能。
 
-5. OpenCV 设定 (OpenCV Definitions)
+5. OpenCV 設定 (OpenCV Definitions)
 
 此部分定義了一些輔助函數，例如用于調整閾值值的滑動條。
 
