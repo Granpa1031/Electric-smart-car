@@ -54,7 +54,7 @@ python camera.py carIP
 
 讀取操縱桿輸入 (如果啟用) 並傳送相應的控制指令。
 
-處理路線(左轉和右轉)。
+處理路線(前進左轉和右轉)。
 
 10. 退出程序 (Exiting the Program)
 
