@@ -25,8 +25,8 @@
 此部分定義了一些輔助函數，例如用于調整閾值值的滑動條。
 
 6. 取得遠端 IP (getRemoteIP)
+python camera.py carIP
 
-此函數目前被註釋，因此其功能尚不清楚。
 
 7. 屏幕設定 (Screen Settings)
 
