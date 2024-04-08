@@ -1,6 +1,6 @@
 1. 導入 (Imports)
 
-程式碼導入了必要的庫，例如 OpenCV (cv2) 用于計算機視覺、NumPy (numpy) 用于數值運算、socket 用于網路通信、Pygame (pygame) 用于顯示攝影機畫面、struct 用于打包和解包數據結構。
+程式碼導入了必要的函式，例如 OpenCV (cv2) 用于計算機視覺、NumPy (numpy) 用于數值運算、socket 用于網路通信、Pygame (pygame) 用于顯示攝影機畫面、struct 用于打包和解包數據結構。
 
 2. 參數設定 (PID Parameters)
 
